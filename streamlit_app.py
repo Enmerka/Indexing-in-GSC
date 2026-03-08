@@ -4,15 +4,14 @@ import httplib2
 from google.oauth2 import service_account
 import google_auth_httplib2
 
-# Page config
-st.set_page_config(page_title="Google Indexing API Removal Tool", layout="wide")
+st.set_page_config(page_title="Google Indexing API Tool", layout="wide")
 
-st.title("Google Indexing API - URL Removal Tool")
+st.title("Google Indexing API Removal Tool")
 
 st.write(
 """
-This app sends **URL removal notifications** to Google's Indexing API and
-displays the response payload returned by Google.
+Upload your **Google Service Account JSON key** and submit URLs to request
+removal from Google's index using the **Indexing API**.
 """
 )
 
@@ -20,13 +19,24 @@ SCOPES = ["https://www.googleapis.com/auth/indexing"]
 ENDPOINT = "https://indexing.googleapis.com/v3/urlNotifications:publish"
 
 
-# Load credentials from Streamlit secrets
-def get_credentials():
+# Upload JSON key
+uploaded_key = st.file_uploader(
+    "Upload Service Account JSON Key",
+    type=["json"]
+)
 
-    service_account_info = dict(st.secrets["gcp_service_account"])
+
+# URL input
+urls = st.text_area(
+    "Enter URLs to remove (one per line)",
+    height=200
+)
+
+
+def create_authenticated_http(json_key):
 
     credentials = service_account.Credentials.from_service_account_info(
-        service_account_info,
+        json_key,
         scopes=SCOPES
     )
 
@@ -35,7 +45,6 @@ def get_credentials():
     return http
 
 
-# Submit removal request
 def submit_removal(http, url):
 
     body = {
@@ -55,23 +64,26 @@ def submit_removal(http, url):
     return response, content
 
 
-# User input
-urls = st.text_area(
-    "Enter URLs to remove (one per line)",
-    height=200
-)
-
 if st.button("Submit Removal Requests"):
 
+    if uploaded_key is None:
+        st.error("Please upload your Service Account JSON key.")
+        st.stop()
+
     if not urls.strip():
-        st.warning("Please enter at least one URL.")
+        st.error("Please enter at least one URL.")
+        st.stop()
+
+    try:
+        json_key = json.load(uploaded_key)
+        http = create_authenticated_http(json_key)
+    except Exception as e:
+        st.error(f"Invalid JSON key file: {e}")
         st.stop()
 
     url_list = urls.splitlines()
 
-    http = get_credentials()
-
-    results = []
+    st.write("Processing requests...")
 
     for url in url_list:
 
@@ -80,31 +92,22 @@ if st.button("Submit Removal Requests"):
         if not url:
             continue
 
-        with st.spinner(f"Submitting removal request for {url}"):
+        st.subheader(url)
+
+        with st.spinner("Sending removal request..."):
 
             response, content = submit_removal(http, url)
 
-        result = {
-            "url": url,
-            "status_code": response.status
-        }
+        st.write("HTTP Status Code:", response.status)
 
         try:
+
             decoded = content.decode("utf-8")
             payload = json.loads(decoded)
-            result["payload"] = payload
+
+            st.json(payload)
 
         except Exception:
-            result["payload"] = str(content)
 
-        results.append(result)
-
-    st.success("Requests completed")
-
-    for r in results:
-
-        st.subheader(r["url"])
-
-        st.write("HTTP Status:", r["status_code"])
-
-        st.json(r["payload"])
+            st.write("Raw Response:")
+            st.write(content)
